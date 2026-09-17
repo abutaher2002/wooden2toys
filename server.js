@@ -3,120 +3,111 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Setup SQLite database - use persistent volume if available
-const dbPath = process.env.RAILWAY_VOLUME_MOUNT_PATH 
-  ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/data.db`
-  : path.join(__dirname, 'data.db');
-const db = new Database(dbPath);
+// PostgreSQL connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_PRIVATE_URL || process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_PRIVATE_URL ? false : { rejectUnauthorized: false }
+});
 
 // Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS orders (
-    id TEXT PRIMARY KEY,
-    customerName TEXT,
-    phoneNumber TEXT,
-    address TEXT,
-    quantity INTEGER,
-    productPrice REAL,
-    deliveryCharge REAL,
-    totalAmount REAL,
-    productName TEXT,
-    orderDate TEXT,
-    source TEXT,
-    createdAt TEXT
-  );
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      "customerName" TEXT,
+      "phoneNumber" TEXT,
+      address TEXT,
+      quantity INTEGER,
+      "productPrice" REAL,
+      "deliveryCharge" REAL,
+      "totalAmount" REAL,
+      "productName" TEXT,
+      "orderDate" TEXT,
+      source TEXT,
+      status TEXT DEFAULT 'Pending',
+      "createdAt" TEXT
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-`);
+  // Insert default price settings if not exists
+  await pool.query(`
+    INSERT INTO settings (key, value) VALUES
+      ('price', '999'),
+      ('originalPrice', '1200'),
+      ('deliveryCharge', '100'),
+      ('productName', '৪৮ পিসের ১ সেট + ফ্রি ঢেঁকি')
+    ON CONFLICT (key) DO NOTHING;
+  `);
 
-// Insert default price settings if not exists
-const existingPrice = db.prepare("SELECT value FROM settings WHERE key = 'price'").get();
-if (!existingPrice) {
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('price', '999');
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('originalPrice', '1200');
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('deliveryCharge', '100');
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('productName', '৪৮ পিসের ১ সেট + ফ্রি ঢেঁকি');
-  console.log('Default price settings inserted');
+  console.log('Database initialized');
 }
 
-// Helper: get all settings
-function getPriceSettings() {
-  const rows = db.prepare("SELECT key, value FROM settings").all();
-  const settings = {};
-  rows.forEach(row => { settings[row.key] = row.value; });
+// Helper: get price settings
+async function getPriceSettings() {
+  const result = await pool.query("SELECT key, value FROM settings");
+  const s = {};
+  result.rows.forEach(r => { s[r.key] = r.value; });
   return {
-    price: Number(settings.price) || 999,
-    originalPrice: Number(settings.originalPrice) || 1200,
-    deliveryCharge: Number(settings.deliveryCharge) || 100,
-    productName: settings.productName || '৪৮ পিসের ১ সেট + ফ্রি ঢেঁকি'
+    price: Number(s.price) || 999,
+    originalPrice: Number(s.originalPrice) || 1200,
+    deliveryCharge: Number(s.deliveryCharge) || 100,
+    productName: s.productName || '৪৮ পিসের ১ সেট + ফ্রি ঢেঁকি'
   };
 }
 
-// Configure multer for file upload
+// Multer setup
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, 'uploads');
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
     cb(null, uploadDir);
   },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'hero-' + uniqueSuffix + path.extname(file.originalname));
+  filename: (req, file, cb) => {
+    cb(null, 'hero-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
   }
 });
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: function (req, file, cb) {
-    if (file.mimetype.startsWith('image/')) cb(null, true);
-    else cb(new Error('Only image files are allowed!'), false);
-  }
-});
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) cb(null, true);
+  else cb(new Error('Only images allowed'), false);
+}});
 
 // Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors({ origin: '*', methods: ['GET','POST','DELETE','PATCH','OPTIONS'], allowedHeaders: ['Content-Type'] }));
 app.use(express.json());
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ── Price API ──────────────────────────────────────────
-app.get('/api/price', (req, res) => {
-  res.json({ success: true, ...getPriceSettings() });
+// ── Price API ──────────────────────────
+app.get('/api/price', async (req, res) => {
+  try { res.json({ success: true, ...(await getPriceSettings()) }); }
+  catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.post('/api/price', (req, res) => {
+app.post('/api/price', async (req, res) => {
   try {
     const { price, originalPrice, deliveryCharge, productName } = req.body;
-    const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-    if (price)         upsert.run('price', String(price));
-    if (originalPrice) upsert.run('originalPrice', String(originalPrice));
-    if (deliveryCharge)upsert.run('deliveryCharge', String(deliveryCharge));
-    if (productName)   upsert.run('productName', productName);
-    console.log('Price updated:', getPriceSettings());
-    res.json({ success: true, message: 'Price updated successfully', ...getPriceSettings() });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Failed to update price' });
-  }
+    const upsert = `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`;
+    if (price) await pool.query(upsert, ['price', String(price)]);
+    if (originalPrice) await pool.query(upsert, ['originalPrice', String(originalPrice)]);
+    if (deliveryCharge) await pool.query(upsert, ['deliveryCharge', String(deliveryCharge)]);
+    if (productName) await pool.query(upsert, ['productName', productName]);
+    res.json({ success: true, message: 'Price updated', ...(await getPriceSettings()) });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── Orders API ─────────────────────────────────────────
-app.post('/api/orders', (req, res) => {
+// ── Orders API ─────────────────────────
+app.post('/api/orders', async (req, res) => {
   try {
-    const order = {
+    const o = {
       id: Date.now().toString(),
       customerName: req.body.customerName || '',
       phoneNumber: req.body.phoneNumber || '',
@@ -128,96 +119,71 @@ app.post('/api/orders', (req, res) => {
       productName: req.body.productName || '',
       orderDate: req.body.orderDate || new Date().toISOString(),
       source: req.body.source || '',
+      status: 'Pending',
       createdAt: new Date().toISOString()
     };
-
-    db.prepare(`
-      INSERT INTO orders (id, customerName, phoneNumber, address, quantity, productPrice, deliveryCharge, totalAmount, productName, orderDate, source, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(order.id, order.customerName, order.phoneNumber, order.address, order.quantity, order.productPrice, order.deliveryCharge, order.totalAmount, order.productName, order.orderDate, order.source, order.createdAt);
-
-    console.log('New order saved:', order.id);
-    res.status(201).json({ success: true, order });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Failed to create order' });
-  }
+    await pool.query(
+      `INSERT INTO orders (id,"customerName","phoneNumber",address,quantity,"productPrice","deliveryCharge","totalAmount","productName","orderDate",source,status,"createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [o.id,o.customerName,o.phoneNumber,o.address,o.quantity,o.productPrice,o.deliveryCharge,o.totalAmount,o.productName,o.orderDate,o.source,o.status,o.createdAt]
+    );
+    console.log('Order saved:', o.id);
+    res.status(201).json({ success: true, order: o });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.get('/api/orders', (req, res) => {
-  const orders = db.prepare("SELECT * FROM orders ORDER BY createdAt DESC").all();
-  res.json({ success: true, orders });
+app.get('/api/orders', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM orders ORDER BY "createdAt" DESC');
+    res.json({ success: true, orders: result.rows });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-app.delete('/api/orders/:id', (req, res) => {
-  const result = db.prepare("DELETE FROM orders WHERE id = ?").run(req.params.id);
-  if (result.changes > 0) {
-    res.json({ success: true, message: 'Order deleted' });
-  } else {
-    res.status(404).json({ success: false, message: 'Order not found' });
-  }
+app.delete('/api/orders/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM orders WHERE id = $1', [req.params.id]);
+    if (result.rowCount > 0) res.json({ success: true });
+    else res.status(404).json({ success: false, message: 'Not found' });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// Update order status
-app.patch('/api/orders/:id/status', (req, res) => {
+app.patch('/api/orders/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
-    const validStatuses = ['Pending', 'Confirmed', 'Retry', 'Delivered', 'Cancelled'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, message: 'Invalid status' });
-    }
-    // Add status column if not exists
-    try { db.exec("ALTER TABLE orders ADD COLUMN status TEXT DEFAULT 'Pending'"); } catch(e) {}
-    const result = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, req.params.id);
-    if (result.changes > 0) {
-      res.json({ success: true, message: 'Status updated' });
-    } else {
-      res.status(404).json({ success: false, message: 'Order not found' });
-    }
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update status' });
-  }
+    const valid = ['Pending','Confirmed','Retry','Delivered','Cancelled'];
+    if (!valid.includes(status)) return res.status(400).json({ success: false, message: 'Invalid status' });
+    await pool.query('UPDATE orders SET status = $1 WHERE id = $2', [status, req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
-// ── Image Upload API ───────────────────────────────────
+// ── Image API ──────────────────────────
 app.post('/api/upload-image', upload.single('image'), (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ success: false, message: 'No image file uploaded' });
-    const imageUrl = `/uploads/${req.file.filename}`;
-    console.log('Image uploaded:', req.file.filename);
-    res.json({ success: true, message: 'Image uploaded successfully', imageUrl, filename: req.file.filename });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'Failed to upload image' });
-  }
+  if (!req.file) return res.status(400).json({ success: false, message: 'No file' });
+  res.json({ success: true, imageUrl: `/uploads/${req.file.filename}`, filename: req.file.filename });
 });
 
 app.get('/api/images', (req, res) => {
   try {
-    const uploadsDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadsDir)) return res.json({ success: true, images: [] });
-    const files = fs.readdirSync(uploadsDir)
-      .filter(file => /\.(jpg|jpeg|png|gif|webp)$/i.test(file))
-      .map(file => ({
-        filename: file,
-        url: `/uploads/${file}`,
-        uploadDate: fs.statSync(path.join(uploadsDir, file)).mtime
-      }))
-      .sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+    const dir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(dir)) return res.json({ success: true, images: [] });
+    const files = fs.readdirSync(dir)
+      .filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f))
+      .map(f => ({ filename: f, url: `/uploads/${f}`, uploadDate: fs.statSync(path.join(dir,f)).mtime }))
+      .sort((a,b) => new Date(b.uploadDate) - new Date(a.uploadDate));
     res.json({ success: true, images: files });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to get images' });
-  }
+  } catch(e) { res.status(500).json({ success: false }); }
 });
 
-// ── Admin Panel ────────────────────────────────────────
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+// Admin panel
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
-app.listen(PORT, () => {
-  console.log(`Backend running on port ${PORT}`);
-  console.log(`Database: ${dbPath}`);
+// Start
+initDB().then(() => {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}).catch(e => {
+  console.error('DB init failed:', e.message);
+  app.listen(PORT, () => console.log(`Server running (no DB) on port ${PORT}`));
 });
 
 module.exports = app;
