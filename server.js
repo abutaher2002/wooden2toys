@@ -156,6 +156,27 @@ app.delete('/api/orders/:id', (req, res) => {
   }
 });
 
+// Update order status
+app.patch('/api/orders/:id/status', (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['Pending', 'Confirmed', 'Retry', 'Delivered', 'Cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+    // Add status column if not exists
+    try { db.exec("ALTER TABLE orders ADD COLUMN status TEXT DEFAULT 'Pending'"); } catch(e) {}
+    const result = db.prepare("UPDATE orders SET status = ? WHERE id = ?").run(status, req.params.id);
+    if (result.changes > 0) {
+      res.json({ success: true, message: 'Status updated' });
+    } else {
+      res.status(404).json({ success: false, message: 'Order not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to update status' });
+  }
+});
+
 // ── Image Upload API ───────────────────────────────────
 app.post('/api/upload-image', upload.single('image'), (req, res) => {
   try {
