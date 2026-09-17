@@ -9,8 +9,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // PostgreSQL connection
+const dbUrl = process.env.DATABASE_PRIVATE_URL || process.env.DATABASE_URL;
+console.log('DB URL exists:', !!dbUrl);
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_PRIVATE_URL || process.env.DATABASE_URL,
+  connectionString: dbUrl,
   ssl: false
 });
 
