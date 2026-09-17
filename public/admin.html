@@ -200,7 +200,7 @@ async function delOrder(id) {
 function copyOrder(id) {
   const o = orders.find(x=>x.id===id);
   if (!o) return;
-  navigator.clipboard.writeText(`নাম: ${o.customerName}\nফোন: ${o.phoneNumber}\nঠিকানা: ${o.address}\nপরিমাণ: ${o.quantity} সেট\nমোট: ৳${o.totalAmount}`).then(()=>alert('কপি হয়েছে!'));
+  navigator.clipboard.writeText(`নাম: ${o.customerName}\nফোন: ${o.phoneNumber}\nঠিকানা: ${o.address}\nপরিমাণ: ${o.quantity} সেট\nমোট: ৳${o.totalAmount}`);
 }
 
 function downloadCSV() {
@@ -223,7 +223,7 @@ async function loadImages() {
   } catch(e) {}
 }
 
-function copyUrl(url) { navigator.clipboard.writeText(window.location.origin+url).then(()=>alert('URL কপি হয়েছে!')); }
+function copyUrl(url) { navigator.clipboard.writeText(window.location.origin+url); }
 
 async function uploadImage() {
   const f = document.getElementById('imgFile').files[0];
@@ -231,7 +231,7 @@ async function uploadImage() {
   const fd = new FormData(); fd.append('image',f);
   const r = await fetch(`${API}/upload-image`,{method:'POST',body:fd});
   const d = await r.json();
-  if (d.success) { alert('✅ আপলোড হয়েছে!'); loadImages(); }
+  if (d.success) { loadImages(); }
   document.getElementById('imgFile').value='';
 }
 
@@ -253,7 +253,7 @@ async function savePrice() {
   const body = { productName:document.getElementById('fName').value, price:document.getElementById('fPrice').value, originalPrice:document.getElementById('fOldPrice').value, deliveryCharge:document.getElementById('fDelivery').value };
   const r = await fetch(`${API}/price`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json();
-  if (d.success) { alert('✅ মূল্য আপডেট হয়েছে!'); loadPrice(); }
+  if (d.success) { loadPrice(); }
 }
 </script>
 </body>
