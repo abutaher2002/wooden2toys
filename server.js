@@ -8,8 +8,10 @@ const Database = require('better-sqlite3');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Setup SQLite database
-const dbPath = path.join(__dirname, 'data.db');
+// Setup SQLite database - use persistent volume if available
+const dbPath = process.env.RAILWAY_VOLUME_MOUNT_PATH 
+  ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/data.db`
+  : path.join(__dirname, 'data.db');
 const db = new Database(dbPath);
 
 // Create tables
