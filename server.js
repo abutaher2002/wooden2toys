@@ -84,7 +84,13 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilt
 }});
 
 // Middleware
-app.use(cors({ origin: '*', methods: ['GET','POST','DELETE','PATCH','OPTIONS'], allowedHeaders: ['Content-Type'] }));
+app.use(cors({
+  origin: '*',
+  methods: ['GET','POST','DELETE','PATCH','OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  optionsSuccessStatus: 200
+}));
+app.options('*', cors()); // Handle preflight
 app.use(express.json());
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
