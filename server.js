@@ -95,7 +95,12 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ── Price API ──────────────────────────
+// Ping endpoint to keep server warm
+app.get('/api/ping', (req, res) => {
+  res.json({ success: true, time: new Date().toISOString() });
+});
+
+// Price API
 app.get('/api/price', async (req, res) => {
   try { res.json({ success: true, ...(await getPriceSettings()) }); }
   catch(e) { res.status(500).json({ success: false, message: e.message }); }
