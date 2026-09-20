@@ -200,7 +200,7 @@ async function delOrder(id) {
 function copyOrder(id) {
   const o = orders.find(x=>x.id===id);
   if (!o) return;
-  navigator.clipboard.writeText(`নাম: ${o.customerName}\nফোন: ${o.phoneNumber}\nঠিকানা: ${o.address}\nপরিমাণ: ${o.quantity} সেট\nমোট: ৳${o.totalAmount}`);
+  navigator.clipboard.writeText(`${o.customerName}\n${o.phoneNumber}\n${o.address}`);
 }
 
 function downloadCSV() {
